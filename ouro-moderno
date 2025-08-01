@@ -1,0 +1,90 @@
+// npm install axios axios-cookiejar-support cheerio tough-cookie
+
+const 1axios = require('axios');
+const { wrapper } = require('axios-cookiejar-support');
+const tough = require('tough-cookie');
+const cheerio = require('cheerio');
+const fs = require('fs');
+const readline = require('readline');
+
+const jar = new tough.CookieJar();
+const client = wrapper(axios.create({ jar, withCredentials: true }));
+
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout
+});
+
+function ask(question) {
+  return new Promise(resolve => rl.question(question, resolve));
+}
+
+async function main() {
+  try {
+    // Pergunta curso e aula
+    const curso = await ask('Digite o código do curso: ');
+    const aula = await ask('Digite o número da aula: ');
+    rl.close();
+
+    const loginUrl = 'http://192.168.0.125/logar.php?acao=logar';
+    const targetUrl = `http://192.168.0.125/index.php?pag=professor&secao=gabaritos&curso=${curso}&aula=${aula}`;
+
+    const loginData = {
+      aluno: 'tiago',
+      senha: '198569879'
+    };
+
+    // 1. GET login page
+    console.log('GET login page...');
+    await client.get('http://192.168.0.125/index.php?pag=login');
+
+    // 2. POST login
+    console.log('POST login...');
+    await client.post(loginUrl, loginData, {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Referer': 'http://192.168.0.125/index.php?pag=login',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+      },
+      transformRequest: [(data) => {
+        return Object.entries(data).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+      }]
+    });
+
+    // 3. GET target page
+    console.log('GET target page...');
+    const targetResp = await client.get(targetUrl, {
+      headers: {
+        'Referer': loginUrl,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+      }
+    });
+
+    // 4. Extrai perguntas e respostas usando cheerio
+    const $ = cheerio.load(targetResp.data);
+    const rows = $('table.table tbody tr');
+    const perguntas = [];
+    const respostas = [];
+    rows.each((i, row) => {
+      const cols = $(row).find('td');
+      if (cols.length === 3) {
+        perguntas.push($(cols[1]).text().trim());
+        respostas.push($(cols[2]).text().trim());
+      }
+    });
+
+    // Salva perguntas e respostas em um arquivo txt
+    let conteudo = 'PERGUNTAS:\n' + perguntas.join('\n') + '\n\nRESPOSTAS:\n' + respostas.join('\n');
+    fs.writeFileSync('respostas.txt', conteudo, 'utf8');
+    console.log('Perguntas e respostas salvas em respostas.txt');
+  } catch (error) {
+    console.error('Erro:', error.message);
+    if (error.response) {
+      console.error('Status:', error.response.status);
+      console.error('Headers:', error.response.headers);
+      console.error('Body:', error.response.data);
+    }
+  }
+}
+
+main();
